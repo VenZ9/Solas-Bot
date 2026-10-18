@@ -1,0 +1,32 @@
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+
+# Node dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# SQLite databases, WAL, and data directory
+data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.db-wal
+*.db-shm
+
+# Uploaded assets, generated ticket transcripts, and logs
+uploads/
+transcripts/
+welcome_assets/
+logs/
+*.log
+
+# OS & Editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

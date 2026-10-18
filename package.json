@@ -1,0 +1,36 @@
+{
+  "name": "solas-bot",
+  "version": "1.0.0",
+  "description": "Solas - Private, high-performance, modular Discord bot with violet liquid-glass aesthetic",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node --test tests/*.test.js",
+    "deploy:dev": "node scripts/deploy-dev.js",
+    "deploy:global": "node scripts/deploy-global.js",
+    "backup": "node scripts/backup-db.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/VenZ9/Solas-Bot.git"
+  },
+  "keywords": [
+    "discord-bot",
+    "discordjs",
+    "sqlite",
+    "moderation",
+    "tickets",
+    "giveaways"
+  ],
+  "author": "VenZ9",
+  "license": "MIT",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "discord.js": "^14.27.0",
+    "dotenv": "^18.0.8"
+  }
+}

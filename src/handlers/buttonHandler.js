@@ -1,14 +1,14 @@
-const { PermissionsBitField, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const { PermissionsBitField, ChannelType, ActionRowBuilder, ButtonBuilder, ButtonStyle, ModalBuilder, TextInputBuilder, TextInputStyle } = require('discord.js');
 const config = require('../config');
 const { isOwner, hasPermission, checkHierarchy, canManageRole } = require('../utils/permissions');
-const { errorEmbed, successEmbed, infoEmbed, warningEmbed } = require('../utils/embeds');
+const { errorEmbed, successEmbed, infoEmbed, warningEmbed, panelEmbed } = require('../utils/embeds');
 const ticketsRepo = require('../database/repositories/tickets');
 const giveawaysRepo = require('../database/repositories/giveaways');
 const reactionRolesRepo = require('../database/repositories/reactionRoles');
 const moderationRepo = require('../database/repositories/moderation');
 const botSettingsRepo = require('../database/repositories/botSettings');
 const loggingService = require('../services/loggingService');
-const { generateTranscriptHtml, saveTranscript } = require('../utils/transcript');
+const { generateTranscriptHtml, saveTranscript, archiveAndCloseTicket } = require('../utils/transcript');
 const logger = require('../utils/logger');
 
 async function handleButtonInteraction(interaction) {
@@ -34,16 +34,79 @@ async function handleButtonInteraction(interaction) {
     }
 
     if (customId === 'owner_shutdown') {
+      const { gracefulShutdown } = require('../utils/lifecycle');
       await interaction.reply({
-        embeds: [warningEmbed('System Shutdown', 'Gracefully closing connections and terminating Solas process...')],
+        embeds: [warningEmbed('System Shutdown', 'Gracefully closing connections, sweepers, and terminating Solas process...')],
         ephemeral: true,
       });
       logger.info('Graceful shutdown initiated via owner panel.');
       setTimeout(() => {
-        process.exit(0);
+        gracefulShutdown('OWNER_PANEL_BUTTON');
       }, 1000);
       return;
     }
+  }
+
+  // 1b. Moderation Panel Quick Actions
+  if (customId === 'mod_panel_warn') {
+    if (!hasPermission(interaction.member, 'ModerateMembers')) {
+      return interaction.reply({
+        embeds: [errorEmbed('Permission Denied', 'You require ModerateMembers permission to issue warnings.')],
+        ephemeral: true,
+      });
+    }
+
+    const modal = new ModalBuilder()
+      .setCustomId('modal_mod_warn')
+      .setTitle('Issue Member Warning')
+      .addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('target_id')
+            .setLabel('Target Member User ID')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('17-20 digit Discord User ID')
+            .setRequired(true)
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId('reason')
+            .setLabel('Warning Reason')
+            .setStyle(TextInputStyle.Paragraph)
+            .setPlaceholder('Describe the infraction...')
+            .setRequired(true)
+        )
+      );
+
+    return interaction.showModal(modal);
+  }
+
+  if (customId === 'mod_panel_refresh') {
+    if (!hasPermission(interaction.member, 'ModerateMembers')) {
+      return interaction.reply({
+        embeds: [errorEmbed('Permission Denied', 'You require ModerateMembers permission to access the moderation panel.')],
+        ephemeral: true,
+      });
+    }
+
+    const recent = moderationRepo.getRecentActions(interaction.guild.id, 5);
+    let recentSummary = 'No recent moderation events logged.';
+    if (recent.length > 0) {
+      recentSummary = recent.map(r => {
+        const time = Math.floor(r.created_at / 1000);
+        return `• <t:${time}:R> | **${r.action_type}** on <@${r.user_id}> by <@${r.moderator_id}>`;
+      }).join('\n');
+    }
+
+    const embed = panelEmbed(
+      'Moderation Control Center',
+      `Welcome to the Solas Server Moderation Panel.\n\nUse slash commands for direct actions, or access quick moderation tools below.\n\n**Recent Server Sanctions:**\n${recentSummary}`
+    );
+    embed.addGlassField('Available Controls', 'Ban, Kick, Timeout, Warn, Warnings Management, Slowmode, Purge, Channel Lock', false);
+
+    return interaction.update({
+      embeds: [embed],
+    });
   }
 
   // 2. Moderation Confirmation Controls (Format: mod_<confirm|cancel>:<action>:<targetId>:<executorId>)
@@ -278,38 +341,22 @@ async function handleButtonInteraction(interaction) {
     });
 
     try {
-      // Fetch all messages for transcript
-      const fetched = await interaction.channel.messages.fetch({ limit: 100 });
-      const messagesArray = Array.from(fetched.values()).reverse();
-
-      const creator = await interaction.client.users.fetch(ticket.creator_id).catch(() => ({ tag: 'Unknown User' }));
-
-      const html = generateTranscriptHtml({
-        ticketNumber: ticket.ticket_number,
-        guildName: interaction.guild.name,
-        channelName: interaction.channel.name,
-        creatorTag: creator.tag || creator.username,
-        closedByTag: interaction.user.tag,
-        closeReason: 'Closed via interaction button',
-        messages: messagesArray,
+      const result = await archiveAndCloseTicket({
+        channel: interaction.channel,
+        ticket,
+        closedBy: interaction.user,
+        reason: 'Closed via interaction button',
+        guild: interaction.guild,
+        client: interaction.client,
       });
 
-      const transcriptPath = saveTranscript(ticket.ticket_number, interaction.guild.id, html);
-      ticketsRepo.closeTicket(ticket.id, interaction.user.id, 'Closed by user/staff');
+      const statusNote = result.complete
+        ? `Complete transcript saved (${result.totalFetched} messages).`
+        : `Partial transcript saved (${result.totalFetched} messages fetched; note: ${result.failureReason}).`;
 
-      loggingService.logTicketEvent(interaction.guild, 'Closed', ticket, interaction.user, `Transcript saved: ${transcriptPath}`);
-
-      // Dispatch transcript to log channel if configured
-      const cfg = ticketsRepo.getConfig(interaction.guild.id);
-      if (cfg.log_channel_id) {
-        const logChan = await interaction.guild.channels.fetch(cfg.log_channel_id).catch(() => null);
-        if (logChan && logChan.isTextBased()) {
-          await logChan.send({
-            content: `Transcript for Ticket #${ticket.ticket_number} (Creator: <@${ticket.creator_id}>)`,
-            files: [transcriptPath],
-          }).catch(() => {});
-        }
-      }
+      await interaction.channel.send({
+        embeds: [infoEmbed('Ticket Concluded', `${statusNote}\nChannel will be deleted in 3 seconds.`)],
+      }).catch(() => {});
 
       // Safe channel deletion after 3 seconds
       setTimeout(async () => {

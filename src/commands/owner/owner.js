@@ -53,15 +53,16 @@ module.exports = {
     .addSubcommand(sub =>
       sub
         .setName('reload')
-        .setDescription('Safely reload internal configurations or cache')
+        .setDescription('Safely reload internal configurations, caches, or command definitions')
         .addStringOption(opt =>
           opt.setName('module')
             .setDescription('Module component to reload')
             .setRequired(true)
             .addChoices(
-              { name: 'Allowlist Cache', value: 'allowlist' },
-              { name: 'Logging Dispatchers', value: 'logging' },
-              { name: 'Automod Rules', value: 'automod' }
+              { name: 'Slash Commands (In-Memory Reload)', value: 'commands' },
+              { name: 'Automod Tracking Cache (Flush)', value: 'automod_cache' },
+              { name: 'Leveling User Cooldowns (Flush)', value: 'leveling_cooldowns' },
+              { name: 'Core Application Modules (Restart Advisory)', value: 'app_modules' }
             )
         )
     )
@@ -104,9 +105,27 @@ module.exports = {
           return interaction.reply({ embeds: [errorEmbed('Invalid Format', 'Guild ID must be a 17-20 digit numeric snowflake.')], ephemeral: true });
         }
 
+        const wasEmpty = allowlistRepo.isAllowlistEmpty();
         allowlistRepo.addGuild(guildId, interaction.user.id, reason);
+
+        // After initialization, automatically audit and leave any connected unauthorized servers
+        let ejectedCount = 0;
+        if (wasEmpty && interaction.client.guilds) {
+          for (const [gId, g] of interaction.client.guilds.cache) {
+            if (!allowlistRepo.isGuildAllowed(gId)) {
+              logger.warn(`Post-Initialization Audit: Leaving unauthorized guild "${g.name}" (${gId}).`);
+              g.leave().catch(() => {});
+              ejectedCount++;
+            }
+          }
+        }
+
+        const desc = wasEmpty
+          ? `Successfully initialized Solas allowlist with primary server ID \`${guildId}\`.\n\nInitial setup is complete. Strict allowlist enforcement is now active across all servers.${ejectedCount > 0 ? ` Ejected ${ejectedCount} unauthorized server(s).` : ''}`
+          : `Successfully granted authorization to server ID \`${guildId}\`.\n\nReason: **${reason}**`;
+
         return interaction.reply({
-          embeds: [successEmbed('Server Allowlisted', `Successfully granted authorization to server ID \`${guildId}\`.\n\nReason: **${reason}**`)],
+          embeds: [successEmbed('Server Allowlisted', desc)],
           ephemeral: true,
         });
       }
@@ -132,7 +151,7 @@ module.exports = {
 
         if (list.length === 0) {
           return interaction.reply({
-            embeds: [infoEmbed('Server Allowlist', 'The allowlist contains 0 authorized guilds.')],
+            embeds: [infoEmbed('Server Allowlist', 'The allowlist contains 0 authorized guilds.\n\nStatus: Initial Setup State.\nUse `/owner allowlist add <guild_id>` to authorize this server.')],
             ephemeral: true,
           });
         }
@@ -185,23 +204,55 @@ module.exports = {
 
     if (subcommand === 'reload') {
       const moduleName = interaction.options.getString('module');
-      logger.info(`Module reload requested: ${moduleName}`);
 
-      return interaction.reply({
-        embeds: [successEmbed('Module Refreshed', `Successfully reloaded internal state for **${moduleName.toUpperCase()}**.`)],
-        ephemeral: true,
-      });
+      if (moduleName === 'commands') {
+        const { loadCommands } = require('../../commandLoader');
+        if (interaction.client && interaction.client.commands) {
+          interaction.client.commands.clear();
+          const reloaded = loadCommands(interaction.client);
+          return interaction.reply({
+            embeds: [successEmbed('Slash Commands Reloaded', `Successfully re-scanned and reloaded **${reloaded.length}** slash command definitions into the client registry.`)],
+            ephemeral: true,
+          });
+        }
+      }
+
+      if (moduleName === 'automod_cache') {
+        const automodService = require('../../services/automodService');
+        const count = automodService.clearCache();
+        return interaction.reply({
+          embeds: [successEmbed('Automod Cache Cleared', `Successfully purged ${count} active user message tracking bucket(s) from memory.`)],
+          ephemeral: true,
+        });
+      }
+
+      if (moduleName === 'leveling_cooldowns') {
+        const levelingService = require('../../services/levelingService');
+        const count = levelingService.clearCooldowns();
+        return interaction.reply({
+          embeds: [successEmbed('Leveling Cooldowns Reset', `Successfully cleared ${count} user cooldown record(s) from memory.`)],
+          ephemeral: true,
+        });
+      }
+
+      if (moduleName === 'app_modules') {
+        return interaction.reply({
+          embeds: [infoEmbed('Process Restart Advisory', 'Hot reloading interconnected database repositories, event listeners, and core services at runtime is unsafe and could lead to state corruption. A clean process restart is required to load codebase changes.\n\nUse `/owner shutdown` or restart your host process/container.')],
+          ephemeral: true,
+        });
+      }
     }
 
     if (subcommand === 'shutdown') {
+      const { gracefulShutdown } = require('../../utils/lifecycle');
       await interaction.reply({
-        embeds: [warningEmbed('System Shutdown', 'Initiating safe shutdown sequence. All active tasks will be safely flushed.')],
+        embeds: [warningEmbed('System Shutdown', 'Initiating unified graceful shutdown sequence. Connections, sweepers, and SQLite persistence will be safely closed.')],
         ephemeral: true,
       });
 
       logger.info('Graceful shutdown initiated via /owner shutdown command.');
       setTimeout(() => {
-        process.exit(0);
+        gracefulShutdown('OWNER_SLASH_COMMAND');
       }, 1000);
     }
   },

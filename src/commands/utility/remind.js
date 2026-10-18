@@ -36,9 +36,9 @@ module.exports = {
       const message = interaction.options.getString('message');
 
       const durationMs = parseDuration(durationInput);
-      if (!durationMs || durationMs < 5000) {
+      if (!durationMs || durationMs < 5000 || durationMs > 365 * 24 * 60 * 60 * 1000) {
         return interaction.reply({
-          embeds: [errorEmbed('Invalid Duration', 'Duration must be at least 5 seconds (e.g. `10s`, `15m`, `3h`, `2d`).')],
+          embeds: [errorEmbed('Invalid Duration', 'Duration must be between 5 seconds and 365 days (e.g. `10s`, `15m`, `3h`, `30d`).')],
           ephemeral: true,
         });
       }

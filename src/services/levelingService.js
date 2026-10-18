@@ -20,6 +20,13 @@ class LevelingService {
     this.lastCleanup = now;
   }
 
+  clearCooldowns() {
+    const size = this.cooldowns.size;
+    this.cooldowns.clear();
+    this.lastCleanup = Date.now();
+    return size;
+  }
+
   async handleMessage(message) {
     if (!message.guild || !message.member || message.author.bot) return;
 

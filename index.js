@@ -30,25 +30,8 @@ async function main() {
   logger.info('Registered event listeners.');
 
   // Graceful shutdown handling
-  let isShuttingDown = false;
-  async function gracefulShutdown(signal) {
-    if (isShuttingDown) return;
-    isShuttingDown = true;
-    logger.info(`Received ${signal}. Executing graceful shutdown sequence...`);
-
-    try {
-      if (client && client.isReady()) {
-        client.destroy();
-        logger.info('Discord client connection closed.');
-      }
-      closeDatabase();
-      logger.info('Shutdown complete.');
-      process.exit(0);
-    } catch (err) {
-      logger.error(`Error during shutdown: ${err.message}`);
-      process.exit(1);
-    }
-  }
+  const { registerClient, gracefulShutdown } = require('./src/utils/lifecycle');
+  registerClient(client);
 
   process.on('SIGINT', () => gracefulShutdown('SIGINT'));
   process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));

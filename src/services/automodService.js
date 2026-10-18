@@ -37,6 +37,13 @@ class AutomodService {
     this.lastCleanup = now;
   }
 
+  clearCache() {
+    const size = this.messageHistory.size;
+    this.messageHistory.clear();
+    this.lastCleanup = Date.now();
+    return size;
+  }
+
   isExempt(member, channel, config) {
     if (!member || member.user.bot) return true;
     if (member.guild.ownerId === member.id) return true;

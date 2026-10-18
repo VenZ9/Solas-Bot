@@ -4,6 +4,11 @@ const logger = require('../utils/logger');
 module.exports = {
   name: 'guildCreate',
   async execute(guild) {
+    if (allowlistRepo.isAllowlistEmpty()) {
+      logger.warn(`Initial Setup State: Solas joined guild "${guild.name}" (${guild.id}) while allowlist is empty. Awaiting owner authorization.`);
+      return;
+    }
+
     const isAllowed = allowlistRepo.isGuildAllowed(guild.id);
 
     if (!isAllowed) {

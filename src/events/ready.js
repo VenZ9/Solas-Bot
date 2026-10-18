@@ -19,13 +19,17 @@ module.exports = {
       }
     }
 
-    // 2. Audit all connected guilds against allowlist
-    for (const [guildId, guild] of client.guilds.cache) {
-      if (!allowlistRepo.isGuildAllowed(guildId)) {
-        logger.warn(`Startup Audit: Leaving unauthorized guild "${guild.name}" (${guildId}).`);
-        await guild.leave().catch(err => {
-          logger.error(`Could not leave unauthorized guild ${guildId}: ${err.message}`);
-        });
+    // 2. Audit connected guilds against allowlist
+    if (allowlistRepo.isAllowlistEmpty()) {
+      logger.warn('Initial Setup State: Allowlist is empty. Connected servers will not be automatically ejected until the owner authorizes an initial server.');
+    } else {
+      for (const [guildId, guild] of client.guilds.cache) {
+        if (!allowlistRepo.isGuildAllowed(guildId)) {
+          logger.warn(`Startup Audit: Leaving unauthorized guild "${guild.name}" (${guildId}).`);
+          await guild.leave().catch(err => {
+            logger.error(`Could not leave unauthorized guild ${guildId}: ${err.message}`);
+          });
+        }
       }
     }
 

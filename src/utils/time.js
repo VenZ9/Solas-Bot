@@ -18,7 +18,14 @@ function parseDuration(input) {
     w: 7 * 24 * 60 * 60 * 1000,
   };
 
-  return value * multipliers[unit];
+  const calculated = value * multipliers[unit];
+  const MAX_DURATION_MS = 5 * 365 * 24 * 60 * 60 * 1000; // 5 years upper limit
+
+  if (!Number.isFinite(calculated) || calculated <= 0 || calculated > MAX_DURATION_MS) {
+    return null;
+  }
+
+  return calculated;
 }
 
 function formatDuration(ms) {

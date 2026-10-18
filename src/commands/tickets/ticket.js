@@ -2,7 +2,7 @@ const { SlashCommandBuilder, PermissionFlagsBits, ChannelType, PermissionsBitFie
 const { errorEmbed, successEmbed, infoEmbed } = require('../../utils/embeds');
 const ticketsRepo = require('../../database/repositories/tickets');
 const loggingService = require('../../services/loggingService');
-const { generateTranscriptHtml, saveTranscript } = require('../../utils/transcript');
+const { archiveAndCloseTicket } = require('../../utils/transcript');
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -176,34 +176,22 @@ module.exports = {
       });
 
       try {
-        const fetched = await interaction.channel.messages.fetch({ limit: 100 });
-        const messagesArray = Array.from(fetched.values()).reverse();
-        const creator = await interaction.client.users.fetch(ticket.creator_id).catch(() => ({ tag: 'Unknown User' }));
-
-        const html = generateTranscriptHtml({
-          ticketNumber: ticket.ticket_number,
-          guildName: guild.name,
-          channelName: interaction.channel.name,
-          creatorTag: creator.tag || creator.username,
-          closedByTag: interaction.user.tag,
-          closeReason: reason,
-          messages: messagesArray,
+        const result = await archiveAndCloseTicket({
+          channel: interaction.channel,
+          ticket,
+          closedBy: interaction.user,
+          reason,
+          guild,
+          client: interaction.client,
         });
 
-        const transcriptPath = saveTranscript(ticket.ticket_number, guild.id, html);
-        ticketsRepo.closeTicket(ticket.id, interaction.user.id, reason);
+        const statusNote = result.complete
+          ? `Complete transcript successfully archived (${result.totalFetched} messages).`
+          : `Partial transcript archived (${result.totalFetched} messages fetched; note: ${result.failureReason}).`;
 
-        loggingService.logTicketEvent(guild, 'Closed', ticket, interaction.user, `Reason: ${reason}`);
-
-        if (cfg.log_channel_id) {
-          const logChan = await guild.channels.fetch(cfg.log_channel_id).catch(() => null);
-          if (logChan && logChan.isTextBased()) {
-            await logChan.send({
-              content: `Transcript for Ticket #${ticket.ticket_number} (Creator: <@${ticket.creator_id}>)`,
-              files: [transcriptPath],
-            }).catch(() => {});
-          }
-        }
+        await interaction.channel.send({
+          embeds: [infoEmbed('Ticket Concluded', `${statusNote}\nChannel will be deleted in 3 seconds.`)],
+        }).catch(() => {});
 
         setTimeout(async () => {
           await interaction.channel.delete(`Ticket #${ticket.ticket_number} closed by ${interaction.user.tag}`).catch(() => {});

@@ -27,8 +27,20 @@ module.exports = {
 
     embed.addGlassField('Available Controls', 'Ban, Kick, Timeout, Warn, Warnings Management, Slowmode, Purge, Channel Lock', false);
 
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('mod_panel_warn')
+        .setLabel('Issue Warning')
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId('mod_panel_refresh')
+        .setLabel('Refresh Sanctions')
+        .setStyle(ButtonStyle.Secondary)
+    );
+
     return interaction.reply({
       embeds: [embed],
+      components: [row],
       ephemeral: true,
     });
   },

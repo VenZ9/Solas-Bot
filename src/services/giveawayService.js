@@ -4,9 +4,14 @@ const logger = require('../utils/logger');
 const { GlassEmbed, infoEmbed, successEmbed } = require('../utils/embeds');
 const { COLORS, TAGS } = require('../constants');
 
+const SAFE_SCHEDULE_WINDOW = 24 * 60 * 60 * 1000; // 24 hours (safely below 32-bit limit)
+const SWEEPER_INTERVAL_MS = 30 * 1000; // 30 seconds
+
 class GiveawayService {
   constructor() {
     this.timers = new Map();
+    this.sweeperInterval = null;
+    this.client = null;
   }
 
   buildGiveawayEmbed(giveaway, entryCount = 0) {
@@ -42,11 +47,62 @@ class GiveawayService {
     );
   }
 
+  startSweeper(client) {
+    this.client = client;
+    if (this.sweeperInterval) {
+      clearInterval(this.sweeperInterval);
+    }
+
+    this.sweepGiveaways(client);
+    this.sweeperInterval = setInterval(() => {
+      this.sweepGiveaways(this.client);
+    }, SWEEPER_INTERVAL_MS);
+
+    if (typeof this.sweeperInterval.unref === 'function') {
+      this.sweeperInterval.unref();
+    }
+  }
+
+  stopSweeper() {
+    if (this.sweeperInterval) {
+      clearInterval(this.sweeperInterval);
+      this.sweeperInterval = null;
+    }
+
+    for (const timer of this.timers.values()) {
+      clearTimeout(timer);
+    }
+    this.timers.clear();
+  }
+
+  sweepGiveaways(client) {
+    if (!client) return;
+    try {
+      const active = giveawaysRepo.getActiveGiveaways();
+      const now = Date.now();
+
+      for (const giveaway of active) {
+        const remainingMs = giveaway.end_time - now;
+        if (remainingMs <= 0) {
+          this.resolveGiveaway(giveaway.id, client);
+        } else if (remainingMs <= SAFE_SCHEDULE_WINDOW && !this.timers.has(giveaway.id)) {
+          const timer = setTimeout(() => {
+            this.resolveGiveaway(giveaway.id, client);
+          }, remainingMs);
+          this.timers.set(giveaway.id, timer);
+        }
+      }
+    } catch (err) {
+      logger.error(`Error in giveaway sweeper: ${err.message}`);
+    }
+  }
+
   scheduleGiveaway(giveaway, client) {
     if (!giveaway || giveaway.ended) return;
 
     if (this.timers.has(giveaway.id)) {
       clearTimeout(this.timers.get(giveaway.id));
+      this.timers.delete(giveaway.id);
     }
 
     const remainingMs = giveaway.end_time - Date.now();
@@ -54,11 +110,14 @@ class GiveawayService {
     if (remainingMs <= 0) {
       // Past deadline, resolve immediately
       this.resolveGiveaway(giveaway.id, client);
-    } else {
+    } else if (remainingMs <= SAFE_SCHEDULE_WINDOW) {
       const timer = setTimeout(() => {
         this.resolveGiveaway(giveaway.id, client);
       }, remainingMs);
       this.timers.set(giveaway.id, timer);
+    } else {
+      // Long-duration giveaway: persistent deadline saved in DB, periodic sweeper will handle it
+      logger.debug(`Giveaway #${giveaway.id} deadline is ${remainingMs}ms in future; registered for background sweeper.`);
     }
   }
 
@@ -108,6 +167,9 @@ class GiveawayService {
   }
 
   recoverActiveGiveaways(client) {
+    if (client) {
+      this.startSweeper(client);
+    }
     const active = giveawaysRepo.getActiveGiveaways();
     logger.info(`Recovering ${active.length} active giveaway(s) after startup.`);
 

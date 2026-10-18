@@ -2,9 +2,64 @@ const remindersRepo = require('../database/repositories/reminders');
 const logger = require('../utils/logger');
 const { infoEmbed } = require('../utils/embeds');
 
+const SAFE_SCHEDULE_WINDOW = 24 * 60 * 60 * 1000; // 24 hours (safely below 32-bit limit)
+const SWEEPER_INTERVAL_MS = 30 * 1000; // 30 seconds
+
 class ReminderService {
   constructor() {
     this.timers = new Map();
+    this.sweeperInterval = null;
+    this.client = null;
+  }
+
+  startSweeper(client) {
+    this.client = client;
+    if (this.sweeperInterval) {
+      clearInterval(this.sweeperInterval);
+    }
+
+    this.sweepReminders(client);
+    this.sweeperInterval = setInterval(() => {
+      this.sweepReminders(this.client);
+    }, SWEEPER_INTERVAL_MS);
+
+    if (typeof this.sweeperInterval.unref === 'function') {
+      this.sweeperInterval.unref();
+    }
+  }
+
+  stopSweeper() {
+    if (this.sweeperInterval) {
+      clearInterval(this.sweeperInterval);
+      this.sweeperInterval = null;
+    }
+
+    for (const timer of this.timers.values()) {
+      clearTimeout(timer);
+    }
+    this.timers.clear();
+  }
+
+  sweepReminders(client) {
+    if (!client) return;
+    try {
+      const pending = remindersRepo.getPendingReminders();
+      const now = Date.now();
+
+      for (const reminder of pending) {
+        const remainingMs = reminder.trigger_at - now;
+        if (remainingMs <= 0) {
+          this.triggerReminder(reminder.id, client);
+        } else if (remainingMs <= SAFE_SCHEDULE_WINDOW && !this.timers.has(reminder.id)) {
+          const timer = setTimeout(() => {
+            this.triggerReminder(reminder.id, client);
+          }, remainingMs);
+          this.timers.set(reminder.id, timer);
+        }
+      }
+    } catch (err) {
+      logger.error(`Error in reminder sweeper: ${err.message}`);
+    }
   }
 
   scheduleReminder(reminder, client) {
@@ -12,17 +67,20 @@ class ReminderService {
 
     if (this.timers.has(reminder.id)) {
       clearTimeout(this.timers.get(reminder.id));
+      this.timers.delete(reminder.id);
     }
 
     const remainingMs = reminder.trigger_at - Date.now();
 
     if (remainingMs <= 0) {
       this.triggerReminder(reminder.id, client);
-    } else {
+    } else if (remainingMs <= SAFE_SCHEDULE_WINDOW) {
       const timer = setTimeout(() => {
         this.triggerReminder(reminder.id, client);
       }, remainingMs);
       this.timers.set(reminder.id, timer);
+    } else {
+      logger.debug(`Reminder #${reminder.id} deadline is ${remainingMs}ms in future; registered for background sweeper.`);
     }
   }
 
@@ -68,6 +126,9 @@ class ReminderService {
   }
 
   recoverPendingReminders(client) {
+    if (client) {
+      this.startSweeper(client);
+    }
     const pending = remindersRepo.getPendingReminders();
     logger.info(`Recovering ${pending.length} pending reminder(s) after startup.`);
 

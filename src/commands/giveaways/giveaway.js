@@ -55,9 +55,9 @@ module.exports = {
       const targetChannel = interaction.options.getChannel('channel') || interaction.channel;
 
       const durationMs = parseDuration(durationInput);
-      if (!durationMs || durationMs < 10000) {
+      if (!durationMs || durationMs < 10000 || durationMs > 90 * 24 * 60 * 60 * 1000) {
         return interaction.reply({
-          embeds: [errorEmbed('Invalid Duration', 'Duration must be at least 10 seconds (e.g. `30s`, `10m`, `1d`).')],
+          embeds: [errorEmbed('Invalid Duration', 'Duration must be between 10 seconds and 90 days (e.g. `30s`, `10m`, `1d`, `30d`).')],
           ephemeral: true,
         });
       }

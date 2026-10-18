@@ -12,16 +12,30 @@ module.exports = {
     try {
       // 1. Guild Allowlist Enforcement
       if (interaction.guildId) {
-        const allowed = allowlistRepo.isGuildAllowed(interaction.guildId);
-        if (!allowed) {
-          logger.warn(`Unauthorized interaction attempt from unapproved guild ${interaction.guildId}`);
-          if (interaction.isRepliable()) {
-            return interaction.reply({
-              embeds: [errorEmbed('Unauthorized Server', 'This Discord server is not authorized to utilize the Solas Operations Core.')],
-              ephemeral: true,
-            }).catch(() => {});
+        if (allowlistRepo.isAllowlistEmpty()) {
+          // While allowlist is empty, permit ONLY the configured bot owner to interact (e.g. to run /owner allowlist add)
+          if (!isOwner(interaction.user.id)) {
+            logger.warn(`Initial Setup State: Non-owner interaction rejected from user ${interaction.user.id} in guild ${interaction.guildId}`);
+            if (interaction.isRepliable()) {
+              return interaction.reply({
+                embeds: [errorEmbed('Setup Required', 'Solas is in an initial uninitialized setup state. Only the configured bot owner can authorize this server using `/owner allowlist add`.')],
+                ephemeral: true,
+              }).catch(() => {});
+            }
+            return;
           }
-          return;
+        } else {
+          const allowed = allowlistRepo.isGuildAllowed(interaction.guildId);
+          if (!allowed) {
+            logger.warn(`Unauthorized interaction attempt from unapproved guild ${interaction.guildId}`);
+            if (interaction.isRepliable()) {
+              return interaction.reply({
+                embeds: [errorEmbed('Unauthorized Server', 'This Discord server is not authorized to utilize the Solas Operations Core.')],
+                ephemeral: true,
+              }).catch(() => {});
+            }
+            return;
+          }
         }
       }
 

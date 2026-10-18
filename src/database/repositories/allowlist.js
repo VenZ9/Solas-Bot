@@ -12,6 +12,16 @@ module.exports = {
     return db.prepare('SELECT * FROM guild_allowlist ORDER BY added_at DESC').all();
   },
 
+  getAllowlistCount() {
+    const db = getDatabase();
+    const row = db.prepare('SELECT COUNT(*) as count FROM guild_allowlist').get();
+    return row ? row.count : 0;
+  },
+
+  isAllowlistEmpty() {
+    return this.getAllowlistCount() === 0;
+  },
+
   addGuild(guildId, addedBy, reason = 'Authorized by owner') {
     const db = getDatabase();
     return db.prepare(`
